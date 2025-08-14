@@ -6,18 +6,20 @@
 #
 
 from dataclasses import asdict, dataclass
-from typing import Any, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import transformers
-from tqdm import tqdm
-from lm_eval import utils
 from lm_eval import simple_evaluate
+from lm_eval import utils
 from lm_eval.api.instance import Instance
-from lm_eval.api.model import LM, TemplateLM
+from lm_eval.api.model import TemplateLM
 from lm_eval.models.utils import pad_and_concat, Collator
+from tqdm import tqdm
 
 from arguments import Arguments, simple_parse_args_string
+from benchmark import EvaluationMetrics
+from generate import load_model_and_tokenizer, setup
 from self_speculation.autoregressive_generator import AutoRegressiveGenerationStrategy
 from self_speculation.generator_base import (
     GenerationConfig,
@@ -26,8 +28,7 @@ from self_speculation.generator_base import (
     HuggingfaceLlamaGenerator,
 )
 from self_speculation.self_speculation_generator import SelfSpeculativeGenerationStrategy
-from generate import load_model_and_tokenizer, setup
-from benchmark import EvaluationMetrics
+
 
 @dataclass
 class EvalArguments:
@@ -54,6 +55,7 @@ class EvalArguments:
     torch_random_seed: int = 1234
     fewshot_random_seed: int = 1234
 
+
 def all_dicts_same(dict_list):
     if not dict_list:  # Check if the list is empty
         return True
@@ -65,7 +67,6 @@ def all_dicts_same(dict_list):
 
 # Light wrapper around generator for lm-eval harness
 class EvalHarnessLM(TemplateLM):
-
     _DEFAULT_MAX_LENGTH = 2048
 
     def __init__(
@@ -77,7 +78,7 @@ class EvalHarnessLM(TemplateLM):
             batch_size: Optional[Union[int, str]] = 1,
             add_bos_token: Optional[bool] = False,
             max_length: Optional[int] = None,
-        ):
+    ):
         super().__init__()
         assert batch_size == 1, "Currently we only support batch size 1"
         self.generator = generator
@@ -131,7 +132,7 @@ class EvalHarnessLM(TemplateLM):
 
     # Copied from https://github.com/EleutherAI/lm-evaluation-harness/blob/main/lm_eval/models/huggingface.py
     def tok_encode(
-        self, string: str, left_truncate_len=None, add_special_tokens=None
+            self, string: str, left_truncate_len=None, add_special_tokens=None
     ) -> List[int]:
         """ """
         # default for None - empty dict, use predefined tokenizer param
@@ -163,10 +164,10 @@ class EvalHarnessLM(TemplateLM):
 
     # Copied from https://github.com/EleutherAI/lm-evaluation-harness/blob/main/lm_eval/models/huggingface.py
     def _loglikelihood_tokens(
-        self,
-        requests: List[Tuple[Tuple[str, str], List[int], List[int]]],
-        disable_tqdm: bool = False,
-        override_bs: int = None,
+            self,
+            requests: List[Tuple[Tuple[str, str], List[int], List[int]]],
+            disable_tqdm: bool = False,
+            override_bs: int = None,
     ) -> List[Tuple[float, bool]]:
         # TODO: implement some kind of efficient-request-middleware that lumps together requests with the same context
         res = []
@@ -213,8 +214,8 @@ class EvalHarnessLM(TemplateLM):
         batch_fn = (
             self._batch_scheduler
             if self.batch_size == "auto"
-            and n_reordered_requests > 0
-            and not override_bs
+               and n_reordered_requests > 0
+               and not override_bs
             else None
         )
 
@@ -253,7 +254,7 @@ class EvalHarnessLM(TemplateLM):
 
                 # when too long to fit in context, truncate from the left
                 inp = torch.tensor(
-                    (context_enc + continuation_enc)[-(self.max_length + 1) :][:-1],
+                    (context_enc + continuation_enc)[-(self.max_length + 1):][:-1],
                     dtype=torch.long,
                     device=self.device,
                 )
@@ -279,7 +280,7 @@ class EvalHarnessLM(TemplateLM):
             )  # [batch, padding_length (inp or cont), vocab]
 
             for (request_str, ctx_tokens, _), logits, inplen, cont_toks in zip(
-                chunk, multi_logits, inplens, cont_toks_list
+                    chunk, multi_logits, inplens, cont_toks_list
             ):
                 # Slice to original seq length
                 contlen = len(cont_toks)
@@ -288,9 +289,9 @@ class EvalHarnessLM(TemplateLM):
                 # also discards + checks for "virtual tokens" in the causal LM's input window
                 # from prompt/prefix tuning tokens, if applicable
                 ctx_len = (
-                    inplen + (logits.shape[0] - padding_len_inp)
+                        inplen + (logits.shape[0] - padding_len_inp)
                 )
-                logits = logits[inplen - contlen : ctx_len]
+                logits = logits[inplen - contlen: ctx_len]
                 logits = logits.unsqueeze(0)  # [1, seq, vocab]
 
                 # Check if per-token argmax is exactly equal to continuation
@@ -302,10 +303,10 @@ class EvalHarnessLM(TemplateLM):
                 # batch along with matching continuation tokens and prompt strings.
                 # logits -> [1, seq, vocab]
                 for request_str, cont_toks, logits in re_ord.get_cache(
-                    req_str=request_str,
-                    cxt_toks=ctx_tokens,
-                    cont_toks=cont_toks,
-                    logits=logits,
+                        req_str=request_str,
+                        cxt_toks=ctx_tokens,
+                        cont_toks=cont_toks,
+                        logits=logits,
                 ):
                     cont_toks = torch.tensor(
                         cont_toks, dtype=torch.long, device=self.device
@@ -332,7 +333,7 @@ class EvalHarnessLM(TemplateLM):
 
     # Copied from https://github.com/EleutherAI/lm-evaluation-harness/blob/main/lm_eval/models/huggingface.py
     def loglikelihood_rolling(
-        self, requests: List[Instance], disable_tqdm: bool = False
+            self, requests: List[Instance], disable_tqdm: bool = False
     ) -> List[float]:
         loglikelihoods = []
 
@@ -345,7 +346,7 @@ class EvalHarnessLM(TemplateLM):
             adaptive_batch_size = batch_size
 
         for (string,) in tqdm(
-            [req.args for req in requests], disable=(disable_tqdm or (self.rank != 0))
+                [req.args for req in requests], disable=(disable_tqdm or (self.rank != 0))
         ):
             rolling_token_windows = list(
                 map(
@@ -391,12 +392,12 @@ class EvalHarnessLM(TemplateLM):
 
         return loglikelihoods
 
+
 def main(args: Arguments, eval_arguments: EvalArguments, generation_config: GenerationConfig):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     setup(args, device=device)
     transformers.utils.logging.set_verbosity_error()
     model, tokenizer = load_model_and_tokenizer(args, device=device)
-
 
     if generation_config.generation_strategy == "autoregressive":
         generation_strategy: GenerationStrategy = AutoRegressiveGenerationStrategy()
@@ -429,6 +430,7 @@ def main(args: Arguments, eval_arguments: EvalArguments, generation_config: Gene
     wrap.metric_result.pop("predicted_text")
     print(wrap.metric_result)
 
+
 def process_cli_arguments() -> Tuple[Arguments, EvalArguments, GenerationConfig]:
     parser = transformers.HfArgumentParser((Arguments, EvalArguments, GenerationConfig))
     (
@@ -443,6 +445,7 @@ def process_cli_arguments() -> Tuple[Arguments, EvalArguments, GenerationConfig]
         general_arguments.model_args = {}
 
     return general_arguments, eval_arguments, generation_config
+
 
 if __name__ == "__main__":
     args, eval_arguments, generation_config = process_cli_arguments()
