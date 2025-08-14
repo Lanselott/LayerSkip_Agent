@@ -45,6 +45,7 @@ class BenchmarkArguments:
     dataset: str
     data_path: Optional[str] = None
     random_shuffle: bool = True
+
     num_samples: Optional[int] = None
     n_shot: Optional[int] = 0
     template: Optional[str] = None
@@ -197,6 +198,7 @@ def benchmark(
             print("Skipping metrics of empty generation")
             # TBD: print stats of emprty generations
             continue
+
         metrics.update(example, response)
 
     metric_result = metrics.compute()

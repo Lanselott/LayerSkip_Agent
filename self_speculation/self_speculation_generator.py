@@ -179,7 +179,8 @@ class SelfSpeculativeGenerationStrategy(GenerationStrategy):
         # verified_tokens: 1 x (T_d)
         # There is a predicted token for every token in the draft output ids list, however note that the
         # first tokens (or first N tokens) are coming from the prompt
-        verified_tokens, verified_probabilities = decode_next_token(logits=verification_logits, sample=sample, temperature=temperature, top_k=top_k, top_p=top_p)
+        verified_tokens, verified_probabilities = (
+             decode_next_token(logits=verification_logits, sample=sample, temperature=temperature, top_k=top_k, top_p=top_p))
 
         # skip verification of the last token as it is a new token predicted from the main model
         verified_tokens = verified_tokens.to(prefill_token_ids)
